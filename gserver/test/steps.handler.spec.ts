@@ -217,6 +217,77 @@ describe('getRegTextForStep', () => {
   });
 });
 
+describe('getRegTextForPureStep', () => {
+  it('should restore every repeated parameter after escaping literal symbols', () => {
+    expect(s.getRegTextForPureStep('I add {int} + {int}')).toStrictEqual(
+      '^I add -?\\d+ \\+ -?\\d+$'
+    );
+  });
+});
+
+describe('quoted Cucumber expression detection', () => {
+  it('should preserve quoted regular expressions', () => {
+    expect(s.shouldUseCucumberExpression('^I enter (.*)$', "'")).toBe(false);
+    expect(
+      s.shouldUseCucumberExpression(
+        '^I click \\\\(foo\\\\) (.*)$',
+        "'"
+      )
+    ).toBe(false);
+    expect(
+      s.shouldUseCucumberExpression('I enter (.*) + (.*)', "'")
+    ).toBe(false);
+    expect(
+      s.shouldUseCucumberExpression('I enter [a-z]+ and \\\\d+', '"')
+    ).toBe(false);
+    expect(s.shouldUseCucumberExpression('I repeat (foo)+', "'")).toBe(false);
+    expect(s.shouldUseCucumberExpression('^I repeat foo+$', "'")).toBe(false);
+  });
+
+  it('should detect escaped punctuation and literal plus signs', () => {
+    expect(
+      s.shouldUseCucumberExpression('I click \\\\(?) icon', "'")
+    ).toBe(true);
+    expect(s.shouldUseCucumberExpression('I click + Add', "'")).toBe(true);
+    expect(s.shouldUseCucumberExpression('I click (?) icon', "'")).toBe(true);
+    expect(s.shouldUseCucumberExpression('I use AM/PM', "'")).toBe(true);
+  });
+
+  it('should match direct literal punctuation in quoted definitions', () => {
+    const matches = (definition: string, featureStep: string) =>
+      new RegExp(s.getRegTextForCucumberExpression(definition))
+        .test(featureStep);
+
+    expect(matches('I click (?) icon', 'I click (?) icon')).toBe(true);
+    expect(matches(
+      'I visit (individual todo page)',
+      'I visit (individual todo page)'
+    )).toBe(true);
+    expect(matches('I use AM/PM', 'I use AM/PM')).toBe(true);
+    expect(matches(
+      'I visit https://examplefx.com/articles',
+      'I visit https://examplefx.com/articles'
+    )).toBe(true);
+  });
+
+  it('should cap completion expansion for many optional parts', () => {
+    let expression = 'I use ';
+    for (let index = 0; index < 20; index++) {
+      expression += `(optional${index})`;
+    }
+    expression += ' + item';
+    expect(s.getCucumberExpressionCompletionVariants(expression)).toHaveLength(
+      256
+    );
+
+    const repeatedExpression =
+      `I use ${'(optional)'.repeat(30)} + item`;
+    expect(
+      s.getCucumberExpressionCompletionVariants(repeatedExpression).length
+    ).toBeLessThanOrEqual(256);
+  });
+});
+
 describe('getPartialRegParts', () => {
   const data = 'I do (a| ( b)) and (c | d) and "(.*)"$';
   const res = ['I', 'do', '(a| ( b)?)', 'and', '(c | d)', 'and', '"(.*)"$'];
@@ -339,6 +410,30 @@ describe('validate', () => {
   });
   it('should not check non-Gherkin steps', () => {
     expect(s.validate('Non_gherkin_word do something else', 1, '')).toBeNull();
+    expect(
+      s.validate('In order to compare review ratings across platforms', 1, '')
+    ).toBeNull();
+  });
+  it('should apply the configured Gherkin language globally', () => {
+    const slovenianHandler = new StepsHandler(__dirname, {
+      ...settings,
+      gherkinLanguage: 'sl',
+    });
+    const fileHeader = '# language: sl\nFeature: ignored override';
+
+    expect(s.getGherkinMatch('In I do something', fileHeader)).toBeNull();
+    expect(
+      slovenianHandler.getGherkinMatch('In I do something', '')
+    ).not.toBeNull();
+    expect(
+      slovenianHandler.validate('In I do something', 1, '')
+    ).toBeNull();
+    expect(
+      slovenianHandler.getDefinition('In I do something', '')
+    ).not.toBeNull();
+    expect(
+      slovenianHandler.getGherkinMatch('Given I do something', '')
+    ).toBeNull();
   });
   it('should return an diagnostic for lines beggining with Given', () => {
     expect(s.validate('Given I do something else', 1, '')).not.toBeNull();
@@ -638,5 +733,179 @@ describe('step as a pure text test', () => {
   it('should return proper partial completion', () => {
     const completion = customStepsHandler.getCompletion('When I give 3', 1, '');
     expect(completion![0].insertText).toStrictEqual('3/4 and 5$');
+  });
+});
+
+describe('quoted steps with special characters', () => {
+  const specialCharactersHandler = new StepsHandler(__dirname, {
+    ...settings,
+    steps: ['/data/steps/specialCharacters.steps.js'],
+    pureTextSteps: false,
+    stepsInvariants: false,
+  });
+  const elements = specialCharactersHandler.getElements();
+
+  const quotedSteps = [
+    'When the user clicks the question mark (?) icon',
+    'When the user clicks + Add Email Address button',
+    'When the user adds 12 + 30',
+    'When the user has cucumber + fries',
+    'When the user has cucumbers + fries',
+    'When the user chooses red + item',
+    'When the user chooses blue + item',
+    'When the user clicks in the - icon',
+    "Then Save Changes button doesn't work",
+    'Then the date column displays each value in local time using a 12-hour format with an AM/PM indicator',
+    'Then the user enters alpha, beta',
+    'When I enter arbitrary quoted regex text',
+    'Given user navigates to TWFX ITP (individual todo page)',
+  ];
+
+  it('should retain and match quoted definitions containing punctuation', () => {
+    expect(elements).toHaveLength(12);
+    quotedSteps.forEach((line) => {
+      expect(specialCharactersHandler.validate(line, 1, '')).toBeNull();
+      const definition = specialCharactersHandler.getDefinition(line, '');
+      expect(([] as Location[]).concat(definition!)[0].uri).toContain(
+        'specialCharacters.steps.js'
+      );
+    });
+  });
+
+  it('should use Cucumber expressions only for affected quoted definitions', () => {
+    const findStep = (text: string) =>
+      elements.find((step) => step.text === text);
+
+    expect(
+      findStep('the user clicks the question mark (?) icon')
+        ?.isCucumberExpression
+    ).toBe(true);
+    expect(
+      findStep('the user clicks + Add Email Address button')
+        ?.isCucumberExpression
+    ).toBe(true);
+    expect(findStep('the user adds {int} + {int}')?.isCucumberExpression)
+      .toBe(true);
+    expect(
+      findStep('the user clicks in the - icon')?.isCucumberExpression
+    ).toBe(false);
+    expect(
+      findStep("Save Changes button doesn't work")?.isCucumberExpression
+    ).toBe(false);
+    expect(
+      findStep('the user enters alpha, beta')?.isCucumberExpression
+    ).toBe(false);
+    expect(findStep('I enter (.*)')?.isCucumberExpression).toBe(false);
+    expect(
+      findStep('the user selects the target (project|todo list)')
+        ?.isCucumberExpression
+    ).toBe(false);
+  });
+
+  it('should not match regex interpretations of quoted punctuation', () => {
+    const incorrectLines = [
+      'When the user clicks  Add Email Address button',
+      'When the user adds 12  30',
+    ];
+    incorrectLines.forEach((line) => {
+      expect(specialCharactersHandler.validate(line, 1, '')).not.toBeNull();
+      expect(specialCharactersHandler.getDefinition(line, '')).toBeNull();
+    });
+  });
+
+  it('should preserve slash-delimited regular expression definitions', () => {
+    expect(
+      specialCharactersHandler.validate(
+        'When the user selects the target project',
+        1,
+        ''
+      )
+    ).toBeNull();
+    expect(
+      specialCharactersHandler.validate(
+        'When the user selects the target todo list',
+        1,
+        ''
+      )
+    ).toBeNull();
+    expect(
+      specialCharactersHandler.validate(
+        'When the user selects the target (project|todo list)',
+        1,
+        ''
+      )
+    ).not.toBeNull();
+  });
+
+  it('should complete quoted steps after special characters', () => {
+    const questionCompletion = specialCharactersHandler.getCompletion(
+      'When the user clicks the question mark (',
+      1,
+      ''
+    )?.find((item) =>
+      item.label === 'the user clicks the question mark (?) icon'
+    );
+    expect(questionCompletion?.insertText).toStrictEqual('(?) icon');
+
+    const plusCompletion = specialCharactersHandler.getCompletion(
+      'When the user clicks + Ad',
+      1,
+      ''
+    )?.find((item) =>
+      item.label === 'the user clicks + Add Email Address button'
+    );
+    expect(plusCompletion?.insertText).toStrictEqual(
+      'Add Email Address button'
+    );
+
+    const slashCompletion = specialCharactersHandler.getCompletion(
+      'Then the date column displays each value in local time using a 12-hour format with an AM/',
+      1,
+      ''
+    )?.find((item) => item.label.endsWith('an AM/PM indicator'));
+    expect(slashCompletion?.insertText).toStrictEqual('AM/PM indicator');
+
+    const parenthesesCompletion = specialCharactersHandler.getCompletion(
+      'Given user navigates to TWFX ITP (',
+      1,
+      ''
+    )?.find((item) =>
+      item.label === 'user navigates to TWFX ITP (individual todo page)'
+    );
+    expect(parenthesesCompletion?.insertText).toStrictEqual(
+      '(individual todo page)'
+    );
+
+    const optionalCompletion = specialCharactersHandler.getCompletion(
+      'When the user has cucumbers + ',
+      1,
+      ''
+    )?.find((item) => item.label === 'the user has cucumber(s) + fries');
+    expect(optionalCompletion?.insertText).toStrictEqual('fries');
+
+    const alternativeCompletion = specialCharactersHandler.getCompletion(
+      'When the user chooses blue + ',
+      1,
+      ''
+    )?.find((item) => item.label === 'the user chooses red/blue + item');
+    expect(alternativeCompletion?.insertText).toStrictEqual('item');
+
+    const currentOptionalCompletion = specialCharactersHandler.getCompletion(
+      'When the user has cucumbers',
+      1,
+      ''
+    )?.find((item) => item.label === 'the user has cucumber(s) + fries');
+    expect(currentOptionalCompletion?.insertText).toStrictEqual(
+      'cucumbers + fries'
+    );
+
+    const currentAlternativeCompletion = specialCharactersHandler.getCompletion(
+      'When the user chooses bl',
+      1,
+      ''
+    )?.find((item) => item.label === 'the user chooses red/blue + item');
+    expect(currentAlternativeCompletion?.insertText).toStrictEqual(
+      'blue + item'
+    );
   });
 });

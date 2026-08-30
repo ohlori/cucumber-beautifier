@@ -5,6 +5,7 @@ import { CustomParameter, PagesSettings } from '../../src/types';
 export const defaultSettings = {
   customParameters: new Array<CustomParameter>(),
   formatConfOverride: {},
+  gherkinLanguage: 'en',
   onTypeFormat: false,
   pages: {} as PagesSettings,
   pureTextSteps: false,

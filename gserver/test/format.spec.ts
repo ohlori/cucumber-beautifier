@@ -23,6 +23,22 @@ const ruleSettings = {
 };
 
 describe('format', () => {
+  it('should format using the globally selected language', () => {
+    const text = [
+      'Funkcionalnost: Pregled',
+      'Scenarij: Primerjava',
+      'Dano uporabnik obstaja',
+    ].join('\n');
+    expect(format('  ', text, {
+      ...defaultSettings,
+      gherkinLanguage: 'sl',
+    })).toStrictEqual([
+      'Funkcionalnost: Pregled',
+      '  Scenarij: Primerjava',
+      '    Dano uporabnik obstaja',
+    ].join('\r\n'));
+  });
+
   [
     { name: 'general', settings: generalSettings },
     { name: 'rule', settings: ruleSettings },

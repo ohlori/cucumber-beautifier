@@ -12,7 +12,7 @@ import {
     TextEdit,
 } from 'vscode-languageserver';
 
-import * as glob from 'glob';
+import { globSync } from 'glob';
 
 import { Settings, PagesSettings } from './types';
 
@@ -81,7 +81,7 @@ export default class PagesHandler {
     }
 
     getPage(name: string, path: string) {
-        const files = glob.sync(path);
+        const files = globSync(path);
         if (files.length) {
             const file = files[0];
             const text = clearComments(getFileContent(files[0]));
@@ -100,7 +100,9 @@ export default class PagesHandler {
     populate(root: string, settings: PagesSettings) {
         this.elements = Object.keys(settings).reduce((res, p) => {
             const page = this.getPage(p, root + '/' + settings[p]);
-            page && res.push(page);
+            if (page) {
+                res.push(page);
+            }
             return res;
         }, new Array<Page>());
     }

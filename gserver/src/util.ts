@@ -1,7 +1,7 @@
 import * as fs from 'fs';
-import * as strip from 'strip-comments';
-import * as md5 from 'md5';
+import strip from 'strip-comments';
 import * as process from 'process';
+import { createHash } from 'crypto';
 import { Range } from 'vscode-languageserver';
 
 export function getOSPath(path: string): string {
@@ -39,7 +39,7 @@ export function clearGherkinComments(text: string): string {
 }
 
 export function getMD5Id(str: string): string {
-    return md5(str);
+    return createHash('md5').update(str).digest('hex');
 }
 
 export function escapeRegExp(str: string): string {

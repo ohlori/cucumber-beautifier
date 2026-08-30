@@ -1,4 +1,4 @@
-import * as glob from 'glob';
+import { globSync } from 'glob';
 import * as commentParser from 'doctrine';
 
 import {
@@ -25,10 +25,13 @@ import {
 } from './util';
 
 import {
-    allGherkinWords,
+    allGherkinDefinitionWords,
     GherkinType,
+    getDefinitionGherkinTypeLower,
+    getGherkinDialect,
     getGherkinType,
     getGherkinTypeLower,
+    normalizeGherkinLanguage,
 } from './gherkin';
 
 import { Settings, StepSettings, CustomParameter } from './types';
@@ -37,6 +40,8 @@ export type Step = {
   id: string;
   reg: RegExp;
   partialReg: RegExp;
+  isCucumberExpression: boolean;
+  completionVariants: string[];
   text: string;
   desc: string;
   def: Definition;
@@ -74,7 +79,11 @@ export default class StepsHandler {
     }
 
     getGherkinRegEx() {
-        return new RegExp(`^(\\s*)(${allGherkinWords})(\\s+)(.*)`);
+        const language = normalizeGherkinLanguage(
+            this.settings.gherkinLanguage
+        );
+        const pattern = getGherkinDialect(language).stepPattern;
+        return new RegExp(`^(\\s*)(${pattern})(\\s+)(.*)`);
     }
 
     getElements(): Step[] {
@@ -83,7 +92,7 @@ export default class StepsHandler {
 
     setElementsHash(path: string): void {
         this.elemenstCountHash = {};
-        const files = glob.sync(path);
+        const files = globSync(path);
         files.forEach((f) => {
             const text = getFileContent(f);
             text.split(/\r?\n/g).forEach((line) => {
@@ -119,7 +128,7 @@ export default class StepsHandler {
         //All the steps should be declared using any gherkin keyword. We should get first 'gherkin' word
         const gherkinPart =
       this.settings.gherkinDefinitionPart ||
-      `(${allGherkinWords}|defineStep|Step|StepDefinition)`;
+      `(${allGherkinDefinitionWords}|defineStep|Step|StepDefinition)`;
 
         //All the symbols, except of symbols, using as step start and letters, could be between gherkin word and our step
         const nonStepStartSymbols = '[^/\'"`\\w]*?';
@@ -154,8 +163,19 @@ export default class StepsHandler {
     }
 
     getOutlineVars(text: string) {
+        const language = normalizeGherkinLanguage(
+            this.settings.gherkinLanguage
+        );
+        const examplesPattern = getGherkinDialect(language).examples
+            .slice()
+            .sort((left, right) => right.length - left.length)
+            .map(escaprRegExpForPureText)
+            .join('|');
+        const examplesHeader = new RegExp(
+            `^\\s*(?:${examplesPattern}):\\s*$`
+        );
         return text.split(/\r?\n/g).reduce((res, a, i, arr) => {
-            if (a.match(/^\s*Examples:\s*$/) && arr[i + 2]) {
+            if (examplesHeader.test(a) && arr[i + 2]) {
                 const names = arr[i + 1].split(/\s*\|\s*/).slice(1, -1);
                 const values = arr[i + 2].split(/\s*\|\s*/).slice(1, -1);
                 names.forEach((n, i) => {
@@ -239,23 +259,201 @@ export default class StepsHandler {
     ] as const
 
     getRegTextForPureStep(step: string) {
-        
-        // Change all the special parameters
+        const parameterChanges = new Array<string>();
+
+        // Replace parameters with unique non-RegExp tokens before escaping.
         this.specialParameters.forEach(([parameter, change]) => {
-            step = step.replace(parameter, change)
-        })
+            step = step.replace(parameter, () => {
+                const token = `\uE000${parameterChanges.length}\uE001`;
+                parameterChanges.push(change);
+                return token;
+            });
+        });
     
         // Escape all special symbols
-        step = escaprRegExpForPureText(step)
+        step = escaprRegExpForPureText(step);
 
-        // Escape all the special parameters back
-        this.specialParameters.forEach(([, change]) => {
-            const escapedChange = escaprRegExpForPureText(change);
-            step = step.replace(escapedChange, change)
-        })
+        // Restore every parameter as its intended RegExp fragment.
+        parameterChanges.forEach((change, index) => {
+            step = step.replace(
+                `\uE000${index}\uE001`,
+                () => change
+            );
+        });
 
         // Compile the final regex
         return `^${step}$`;
+    }
+
+    shouldUseCucumberExpression(step: string, delimiter?: string) {
+        // Doubled source backslashes preserve explicitly escaped Cucumber
+        // punctuation. Plus signs are also literals in a
+        // Cucumber expression, but a RegExp would interpret them as quantifiers.
+        // Keep all other quoted patterns in the legacy RegExp mode: quoted
+        // RegExp definitions such as `I enter (.*)` are supported historically.
+        if (delimiter === undefined || delimiter === '/') {
+            return false;
+        }
+        const hasStrongRegExpSyntax = /(^\^|\$$)/.test(step) ||
+            /\.\*|\.\+|\[[^\]]+\]|\\{1,2}[dDsSwWbB1-9]|\(\?[:=!<]|\||\)(?:[+*?]|\{\d+(?:,\d*)?\})/.test(step);
+        if (hasStrongRegExpSyntax) {
+            return false;
+        }
+        return /\\\\[{}()/\\]/.test(step) || /[()+?/]/.test(step);
+    }
+
+    getRegTextForCucumberExpression(step: string) {
+        const regexChanges = new Array<string>();
+        const preserveRegExp = (change: string) => {
+            const token = `\uE000${regexChanges.length}\uE001`;
+            regexChanges.push(change);
+            return token;
+        };
+
+        // Preserve punctuation escaped through both the source string and the
+        // Cucumber expression before removing the source-level backslashes.
+        step = step.replace(/\\\\([{}()/\\])/g, (_match, symbol: string) =>
+            preserveRegExp(escaprRegExpForPureText(symbol))
+        );
+        step = this.getTextForQuotedStep(step);
+
+        this.specialParameters.forEach(([parameter, change]) => {
+            step = step.replace(parameter, () => preserveRegExp(change));
+        });
+
+        // Unknown parameter types are still supported as wildcards.
+        step = step.replace(/{(?![\d,])[^}]*}/g, () =>
+            preserveRegExp('.*')
+        );
+
+        // Ambiguous quoted punctuation supports both its literal spelling and
+        // Cucumber-expression optional/alternative semantics.
+        step = step.replace(/\(([^()]*)\)/g, (match, optionalText: string) =>
+            preserveRegExp(
+                `(?:${escaprRegExpForPureText(match)}|` +
+                `(?:${escaprRegExpForPureText(optionalText)})?)`
+            )
+        );
+        step = step.replace(/[^\s/]+(?:\/[^\s/]+)+/g, (alternatives) =>
+            preserveRegExp(
+                `(?:${escaprRegExpForPureText(alternatives)}|` +
+                `${alternatives
+                    .split('/')
+                    .map(escaprRegExpForPureText)
+                    .join('|')})`
+            )
+        );
+
+        step = escaprRegExpForPureText(step);
+        for (let index = regexChanges.length - 1; index >= 0; index--) {
+            step = step.replace(
+                `\uE000${index}\uE001`,
+                () => regexChanges[index]
+            );
+        }
+        return `^${step}$`;
+    }
+
+    getCucumberExpressionCompletionVariants(step: string) {
+        const maxVariants = 256;
+        let optionalCandidates = 0;
+        let alternativeCandidates = 0;
+        const literalChanges = new Array<string>();
+        const preserveLiteral = (literal: string) => {
+            const token = `\uE000${literalChanges.length}\uE001`;
+            literalChanges.push(literal);
+            return token;
+        };
+
+        // Protect escaped punctuation so literal parentheses and slashes are
+        // not expanded as optional or alternative Cucumber-expression text.
+        step = step.replace(/\\\\([{}()/\\])/g, (_match, symbol: string) =>
+            preserveLiteral(symbol)
+        );
+        step = this.getTextForQuotedStep(step);
+
+        const addVariant = (variants: string[], variant: string) => {
+            if (variants.length < maxVariants && !~variants.indexOf(variant)) {
+                variants.push(variant);
+            }
+            return variants;
+        };
+        const expandOptionalText = (
+            text: string,
+            variants = new Array<string>()
+        ): string[] => {
+            if (optionalCandidates >= maxVariants) {
+                return variants;
+            }
+            const match = text.match(/\(([^()]*)\)/);
+            if (!match || match.index === undefined) {
+                optionalCandidates++;
+                return addVariant(variants, text);
+            }
+            const before = text.slice(0, match.index);
+            const after = text.slice(match.index + match[0].length);
+            expandOptionalText(
+                before + preserveLiteral(match[0]) + after,
+                variants
+            );
+            expandOptionalText(before + after, variants);
+            return expandOptionalText(before + match[1] + after, variants);
+        };
+        const expandAlternativeText = (
+            text: string,
+            variants = new Array<string>()
+        ): string[] => {
+            if (alternativeCandidates >= maxVariants) {
+                return variants;
+            }
+            const match = text.match(/[^\s/]+(?:\/[^\s/]+)+/);
+            if (!match || match.index === undefined) {
+                alternativeCandidates++;
+                return addVariant(variants, text);
+            }
+            const before = text.slice(0, match.index);
+            const after = text.slice(match.index + match[0].length);
+            expandAlternativeText(
+                before + preserveLiteral(match[0]) + after,
+                variants
+            );
+            return match[0].split('/').reduce((expanded, alternative) => {
+                expandAlternativeText(before + alternative + after, expanded);
+                return expanded;
+            }, variants);
+        };
+
+        const variants = expandOptionalText(step).reduce((expanded, variant) => {
+            expandAlternativeText(variant, expanded);
+            return expanded;
+        }, new Array<string>());
+        return variants.map((variant) =>
+            literalChanges.reduce(
+                (restored, literal, index) => restored.replace(
+                    `\uE000${index}\uE001`,
+                    () => literal
+                ),
+                variant
+            )
+        );
+    }
+
+    getBestCompletionVariant(variants: string[], typedStep: string) {
+        return variants.reduce((best, variant) => {
+            const commonPrefixLength = variant.split('').reduce(
+                (length, character, index) =>
+                    length === index && character === typedStep[index]
+                        ? length + 1
+                        : length,
+                0
+            );
+            return commonPrefixLength > best.commonPrefixLength
+                ? { commonPrefixLength, variant }
+                : best;
+        }, {
+            commonPrefixLength: -1,
+            variant: variants[0],
+        }).variant;
     }
 
     getRegTextForStep(step: string) {
@@ -285,12 +483,18 @@ export default class StepsHandler {
         return step;
     }
 
-    getPartialRegParts(text: string) {
+    getPartialRegParts(
+        text: string,
+        pureText = this.settings.pureTextSteps,
+        cucumberExpression = false
+    ) {
     // We should separate got string into the parts by space symbol
     // But we should not touch /()/ RegEx elements
-        text = this.settings.pureTextSteps
-            ? this.getRegTextForPureStep(text)
-            : this.getRegTextForStep(text);
+        text = cucumberExpression
+            ? this.getRegTextForCucumberExpression(text)
+            : pureText
+                ? this.getRegTextForPureStep(text)
+                : this.getRegTextForStep(text);
         let currString = '';
         let bracesMode = false;
         let openingBracesNum = 0;
@@ -329,17 +533,29 @@ export default class StepsHandler {
         return res;
     }
 
-    getPartialRegText(regText: string) {
+    getPartialRegText(
+        regText: string,
+        pureText = this.settings.pureTextSteps,
+        cucumberExpression = false
+    ) {
     //Same with main reg, only differ is match any string that same or less that current one
-        return this.getPartialRegParts(regText)
+        return this.getPartialRegParts(
+            regText,
+            pureText,
+            cucumberExpression
+        )
             .map((el) => `(${el}|$)`)
             .join('( |$)')
             .replace(/^\^|^/, '^');
     }
 
-    getTextForStep(step: string) {
+    getTextForQuotedStep(step: string) {
     //Remove all the backslashes
-        step = step.replace(/\\/g, '');
+        return step.replace(/\\/g, '');
+    }
+
+    getTextForStep(step: string) {
+        step = this.getTextForQuotedStep(step);
 
         //Remove "string start" and "string end" RegEx symbols
         step = step.replace(/^\^|\$$/g, '');
@@ -378,10 +594,14 @@ export default class StepsHandler {
         }
     }
 
-    getCompletionInsertText(step: string, stepPart: string) {
+    getCompletionInsertText(
+        step: string,
+        stepPart: string,
+        pureText = this.settings.pureTextSteps
+    ) {
     // Return only part we need for our step
         let res = step;
-        const strArray = this.getPartialRegParts(res);
+        const strArray = this.getPartialRegParts(res, pureText);
         const currArray = new Array<string>();
         const { length } = strArray;
         for (let i = 0; i < length; i++) {
@@ -422,12 +642,12 @@ export default class StepsHandler {
             res = res.replace(/"\[\^"\]\+"/g, '""');
         }
 
-        if (this.settings.pureTextSteps) {
-            // Replace all the escape chars for now
-            res = res.replace(/\\/g, '');
-            // Also remove start and end of the string - we don't need them in the completion
+        if (pureText) {
+            // Remove generated regex anchors before unescaping literal ones.
             res = res.replace(/^\^/, '');
-            res = res.replace(/\$$/, '');
+            res = res.replace(/(^|[^\\])\$$/, '$1');
+            // Replace all the escape chars for now.
+            res = res.replace(/\\/g, '');
         }
 
         return res;
@@ -454,7 +674,8 @@ export default class StepsHandler {
         stepPart: string,
         def: Location,
         gherkin: GherkinType,
-        comments: JSDocComments
+        comments: JSDocComments,
+        stepDelimiter?: string
     ): Step[] {
         const stepsVariants = this.settings.stepsInvariants
             ? this.getStepTextInvariants(stepPart)
@@ -464,51 +685,63 @@ export default class StepsHandler {
         const documentation = comment
             ? this.getDocumentation(comment)
             : fullStepLine;
-        return stepsVariants
-            .filter((step) => {
-                //Filter invalid long regular expressions
-                try {
-                    const regText = this.settings.pureTextSteps
-                        ? this.getRegTextForPureStep(step)
-                        : this.getRegTextForStep(step);
-                    new RegExp(regText);
-                    return true;
-                } catch (err) {
-                    //Todo - show some warning
-                    return false;
-                }
-            })
-            .map((step) => {
+        return stepsVariants.reduce((steps, step) => {
+            const isCucumberExpression = !this.settings.pureTextSteps &&
+                this.shouldUseCucumberExpression(step, stepDelimiter);
+            let reg: RegExp;
+            try {
                 const regText = this.settings.pureTextSteps
                     ? this.getRegTextForPureStep(step)
-                    : this.getRegTextForStep(step);
-                const reg = new RegExp(regText);
-                let partialReg;
-                // Use long regular expression in case of error
-                try {
-                    partialReg = new RegExp(this.getPartialRegText(step));
-                } catch (err) {
-                    // Todo - show some warning
-                    partialReg = reg;
-                }
-                //Todo we should store full value here
-                const text = this.settings.pureTextSteps
-                    ? step
+                    : isCucumberExpression
+                        ? this.getRegTextForCucumberExpression(step)
+                        : this.getRegTextForStep(step);
+                reg = new RegExp(regText);
+            } catch (err) {
+                // Filter invalid long regular expressions.
+                return steps;
+            }
+
+            let partialReg;
+            // Use long regular expression in case of error
+            try {
+                partialReg = new RegExp(
+                    this.getPartialRegText(
+                        step,
+                        this.settings.pureTextSteps,
+                        isCucumberExpression
+                    )
+                );
+            } catch (err) {
+                // Todo - show some warning
+                partialReg = reg;
+            }
+
+            //Todo we should store full value here
+            const text = this.settings.pureTextSteps
+                ? step
+                : isCucumberExpression
+                    ? this.getTextForQuotedStep(step)
                     : this.getTextForStep(step);
-                const id = 'step' + getMD5Id(text);
-                const count = this.getElementCount(id);
-                return {
-                    id,
-                    reg,
-                    partialReg,
-                    text,
-                    desc,
-                    def,
-                    count,
-                    gherkin,
-                    documentation,
-                };
+            const completionVariants = isCucumberExpression
+                ? this.getCucumberExpressionCompletionVariants(step)
+                : [text];
+            const id = 'step' + getMD5Id(text);
+            const count = this.getElementCount(id);
+            steps.push({
+                id,
+                reg,
+                partialReg,
+                isCucumberExpression,
+                completionVariants,
+                text,
+                desc,
+                def,
+                count,
+                gherkin,
+                documentation,
             });
+            return steps;
+        }, new Array<Step>());
     }
 
     getMultiLineComments(content: string) {
@@ -562,15 +795,25 @@ export default class StepsHandler {
                     }
                 }
                 if (match) {
-                    const [, beforeGherkin, gherkinString, , stepPart] = match;
-                    const gherkin = getGherkinTypeLower(gherkinString);
+                    const [, beforeGherkin, gherkinString, stepDelimiter, stepPart] = match;
+                    const gherkin = getDefinitionGherkinTypeLower(
+                        gherkinString,
+                        this.settings.gherkinLanguage
+                    );
                     const pos = Position.create(lineIndex, beforeGherkin.length);
                     const def = Location.create(
                         getOSPath(filePath),
                         Range.create(pos, pos)
                     );
                     steps = steps.concat(
-                        this.getSteps(finalLine, stepPart, def, gherkin, fileComments)
+                        this.getSteps(
+                            finalLine,
+                            stepPart,
+                            def,
+                            gherkin,
+                            fileComments,
+                            stepDelimiter
+                        )
                     );
                 }
                 return steps;
@@ -583,7 +826,7 @@ export default class StepsHandler {
         workSpaceRoot: string
     ) {
         return stepsPathes.reduce((res, path) => {
-            const files = glob.sync(path);
+            const files = globSync(path);
             if (!files.length) {
                 const searchTerm = path.replace(workSpaceRoot + '/', '');
                 const range = getTextRange(
@@ -606,7 +849,7 @@ export default class StepsHandler {
         this.elements = stepsPathes
             .reduce(
                 (files, path) =>
-                    files.concat(glob.sync(root + '/' + path, { absolute: true })),
+                    files.concat(globSync(root + '/' + path, { absolute: true })),
                 new Array<string>()
             )
             .reduce(
@@ -672,7 +915,10 @@ export default class StepsHandler {
     }
 
     getStrictGherkinType(gherkinPart: string, lineNumber: number, text: string) {
-        const gherkinType = getGherkinType(gherkinPart);
+        const language = normalizeGherkinLanguage(
+            this.settings.gherkinLanguage
+        );
+        const gherkinType = getGherkinType(gherkinPart, language);
         if (gherkinType === GherkinType.And || gherkinType === GherkinType.But) {
             return text
                 .split(/\r?\n/g)
@@ -682,7 +928,10 @@ export default class StepsHandler {
                         const match = this.getGherkinMatch(val, text);
                         if (match) {
                             const [, , prevGherkinPart] = match;
-                            const prevGherkinPartType = getGherkinTypeLower(prevGherkinPart);
+                            const prevGherkinPartType = getGherkinTypeLower(
+                                prevGherkinPart,
+                                language
+                            );
                             if (
                                 ~[
                                     GherkinType.Given,
@@ -697,7 +946,7 @@ export default class StepsHandler {
                     return res;
                 }, GherkinType.Other);
         } else {
-            return getGherkinTypeLower(gherkinPart);
+            return getGherkinTypeLower(gherkinPart, language);
         }
     }
 
@@ -739,7 +988,15 @@ export default class StepsHandler {
                     data: step.id,
                     documentation: step.documentation,
                     sortText: getSortPrefix(step.count, 5) + '_' + step.text,
-                    insertText: this.getCompletionInsertText(step.text, stepPart),
+                    insertText: this.getCompletionInsertText(
+                        this.getBestCompletionVariant(
+                            step.completionVariants,
+                            stepPartBase
+                        ),
+                        stepPart,
+                        this.settings.pureTextSteps ||
+                            step.isCucumberExpression
+                    ),
                     insertTextFormat: InsertTextFormat.Snippet,
                 };
             });

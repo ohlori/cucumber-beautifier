@@ -1,5 +1,5 @@
-import * as glob from 'glob';
 import * as fs from 'fs';
+import { globSync } from 'glob';
 
 import {
     createConnection,
@@ -29,6 +29,8 @@ import StepsHandler from './steps.handler';
 import PagesHandler from './pages.handler';
 import { getOSPath, clearGherkinComments } from './util';
 import { Settings, BaseSettings } from './types';
+import { getGherkinSemanticTokens } from './semantic.tokens';
+import { normalizeGherkinLanguage } from './gherkin';
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -73,6 +75,13 @@ connection.onInitialize((params: InitializeParams) => {
             diagnosticProvider: {
                 interFileDependencies: false,
                 workspaceDiagnostics: false
+            },
+            semanticTokensProvider: {
+                legend: {
+                    tokenTypes: ['keyword'],
+                    tokenModifiers: [],
+                },
+                full: true,
             },
             definitionProvider: true,
             documentFormattingProvider: true,
@@ -139,12 +148,12 @@ function pagesPosition(line: string, char: number, settings: Settings) {
 
 async function revalidateAllDocuments() {
     connection.languages.diagnostics.refresh();
+    connection.languages.semanticTokens.refresh();
 }
 
-function watchStepsFiles(settings: Settings) {    
+function watchStepsFiles(settings: Settings) {
     settings.steps.forEach((path) => {
-        glob
-            .sync(workspaceRoot + '/' + path, { ignore: '.gitignore' })
+        globSync(workspaceRoot + '/' + path, { ignore: '.gitignore' })
             .forEach((f) => {
                 fs.unwatchFile(f);
                 fs.watchFile(f, async () => {
@@ -159,6 +168,9 @@ function watchStepsFiles(settings: Settings) {
 function getSettingsFromBase(baseSettings: BaseSettings) {
     const settings: Settings = {
         ...baseSettings,
+        gherkinLanguage: normalizeGherkinLanguage(
+            baseSettings.gherkinLanguage
+        ),
         steps: new Array<string>().concat(baseSettings.steps ?? []),
     };
     return settings;
@@ -232,6 +244,15 @@ connection.onCompletion(
         }
     }
 );
+
+connection.languages.semanticTokens.on(async (params) => {
+    const settings = await getSettings();
+    const document = documents.get(params.textDocument.uri);
+    return getGherkinSemanticTokens(
+        document?.getText() || '',
+        settings.gherkinLanguage
+    );
+});
 
 connection.onCompletionResolve((item: CompletionItem) => {
     if (~item.data.indexOf('step')) {

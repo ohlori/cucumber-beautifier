@@ -24,6 +24,7 @@ export interface FormatConf {
 export interface BaseSettings {
     customParameters: CustomParameter[],
     formatConfOverride: FormatConf,
+    gherkinLanguage: string,
     gherkinDefinitionPart?: string,
     onTypeFormat: boolean,
     pages: PagesSettings,
@@ -41,6 +42,7 @@ export interface BaseSettings {
 export interface Settings {
     customParameters: CustomParameter[],
     formatConfOverride: FormatConf,
+    gherkinLanguage: string,
     gherkinDefinitionPart?: string,
     onTypeFormat: boolean,
     pages: PagesSettings,

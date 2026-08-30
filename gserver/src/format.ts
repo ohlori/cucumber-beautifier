@@ -1,21 +1,7 @@
 import { Settings, FormatConf  } from './types';
+import { getGherkinDialect } from './gherkin';
 
-const FORMAT_CONF: FormatConf = {
-    'Ability': 0,
-    'Business Need': 0,
-    'Feature:': 0,
-    'Rule:': 1,
-    'Scenario:': 1,
-    'Example:': 1,
-    'Background:': 1,
-    'Scenario Outline:': 1,
-    'Examples:': 2,
-    'Given': 2,
-    'When': 2,
-    'Then': 2,
-    'And': 2,
-    'But': 2,
-    '*': 2,
+const BASE_FORMAT_CONF: FormatConf = {
     '|': 3,
     '"""': 3,
     '#': 'relative',
@@ -33,8 +19,28 @@ function findIndentation(line: string, settings: Settings) {
 function findFormatConf(line: string, config: FormatConf) {
     const symbol = Object
         .keys(config)
+        .sort((left, right) => right.length - left.length)
         .find((symbol) => line.startsWith(symbol));
     return symbol ? { symbol, value: config[symbol] } : null;
+}
+
+function getDialectFormatConf(settings: Settings): FormatConf {
+    const dialect = getGherkinDialect(settings.gherkinLanguage);
+    const config = { ...BASE_FORMAT_CONF };
+    const add = (keywords: string[], value: number, colon = false) => {
+        keywords.forEach((keyword) => {
+            config[colon ? `${keyword}:` : keyword] = value;
+        });
+    };
+
+    add(dialect.feature, 0, true);
+    add(dialect.rule, 1, true);
+    add(dialect.background, 1, true);
+    add(dialect.scenario, 1, true);
+    add(dialect.scenarioOutline, 1, true);
+    add(dialect.examples, 2, true);
+    add(dialect.stepKeywords, 2);
+    return config;
 }
 
 function findFormat(line: string, settings: Settings) {
@@ -44,7 +50,7 @@ function findFormat(line: string, settings: Settings) {
         .reduce((acc, [key, value]) => {
             acc[key] = value;
             return acc;
-        }, { ...FORMAT_CONF });
+        }, getDialectFormatConf(settings));
     const clearLine = line.trim();
     return findFormatConf(clearLine, mergedConfig);
 }
@@ -67,7 +73,11 @@ export function correctIndents(text: string, indent: string, settings: Settings)
     let commentsMode = false;
     const defaultIndentation = 0;
     let insideRule = false;
-    const ruleValue = findFormat('Rule:', settings)?.value;
+    const ruleSymbols = getGherkinDialect(settings.gherkinLanguage).rule
+        .map((keyword) => `${keyword}:`);
+    const ruleValue = ruleSymbols
+        .map((symbol) => findFormat(symbol, settings)?.value)
+        .find((value) => typeof value === 'number');
     const ruleIndentation = typeof ruleValue === 'number' ? ruleValue : 0;
     return text
         .split(/\r?\n/g)
@@ -82,13 +92,17 @@ export function correctIndents(text: string, indent: string, settings: Settings)
             }
             //Now we should find current line format
             const format = findFormat(line, settings);
-            if (format && format.symbol === 'Rule:') {
+            if (format && ruleSymbols.includes(format.symbol)) {
                 insideRule = true;
             }
             let indentCount: number;
             if (~line.search(/^\s*$/)) { indentCount = 0; }
             else if (format && typeof format.value === 'number') {
-                indentCount = format.value + (insideRule && format.symbol !== 'Rule:' ? ruleIndentation : 0);
+                indentCount = format.value + (
+                    insideRule && !ruleSymbols.includes(format.symbol)
+                        ? ruleIndentation
+                        : 0
+                );
             } else {
                 // In case of 'relativeUp' format option - look for the nearest previous strig with some numeric indentation
                 // In case of 'relative' or unknown option - look for the nearest next string with some numeric indentation
