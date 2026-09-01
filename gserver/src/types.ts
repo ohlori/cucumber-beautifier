@@ -30,6 +30,7 @@ export interface BaseSettings {
     pages: PagesSettings,
     pureTextSteps: boolean
     skipDocStringsFormat: boolean,
+    skipStepValidationTags: string[],
     smartSnippets: boolean,
     stepRegExSymbol?: string
     steps: string | string[],
@@ -48,6 +49,7 @@ export interface Settings {
     pages: PagesSettings,
     pureTextSteps: boolean
     skipDocStringsFormat: boolean,
+    skipStepValidationTags: string[],
     smartSnippets: boolean,
     stepRegExSymbol?: string
     steps: StepSettings,

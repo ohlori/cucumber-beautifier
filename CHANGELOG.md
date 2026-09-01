@@ -1,3 +1,6 @@
+## 3.1.2
+* Added `cucumberautocomplete.skipStepValidationTags` — skip missing-step diagnostics for steps under Feature/Rule/Scenario/Scenario Outline scopes that carry any of the listed tags (e.g. `["@ai"]`). Tags inherit downward.
+
 ## 3.1.0
 * Extension updates:
 1. Fixed error with space in the optional text

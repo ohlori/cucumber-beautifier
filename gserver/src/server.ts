@@ -171,6 +171,9 @@ function getSettingsFromBase(baseSettings: BaseSettings) {
         gherkinLanguage: normalizeGherkinLanguage(
             baseSettings.gherkinLanguage
         ),
+        skipStepValidationTags: new Array<string>().concat(
+            baseSettings.skipStepValidationTags ?? []
+        ),
         steps: new Array<string>().concat(baseSettings.steps ?? []),
     };
     return settings;

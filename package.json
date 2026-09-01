@@ -1,6 +1,6 @@
 {
   "name": "cucumberautocomplete",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "publisher": "alexkrechik",
   "author": "Alexander Krechik",
   "license": "MIT",
@@ -234,6 +234,15 @@
           "type": "boolean",
           "required": false,
           "default": false
+        },
+        "cucumberautocomplete.skipStepValidationTags": {
+          "description": "Skip missing-step diagnostics for steps under a Feature, Rule, Scenario, or Scenario Outline that carries any of these tags (e.g. [\"@ai\"]). Tags inherit downward.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": []
         },
         "cucumberautocomplete.formatConfOverride": {
           "description": "Override some formatting via format conf strings = {[key: String]: num | 'relative'}, where key - beggining of the string, num - numeric value of indents",

@@ -10,6 +10,7 @@ export const defaultSettings = {
   pages: {} as PagesSettings,
   pureTextSteps: false,
   skipDocStringsFormat: false,
+  skipStepValidationTags: new Array<string>(),
   smartSnippets: false,
   steps: new Array<string>(),
   stepsInvariants: false,

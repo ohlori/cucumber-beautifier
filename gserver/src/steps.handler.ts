@@ -877,6 +877,108 @@ export default class StepsHandler {
         );
     }
 
+    normalizeTag(tag: string) {
+        const trimmed = tag.trim();
+        if (!trimmed) {
+            return '';
+        }
+        return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
+    }
+
+    parseTagLine(line: string) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('@')) {
+            return null;
+        }
+        return trimmed
+            .split(/\s+/)
+            .map((tag) => this.normalizeTag(tag))
+            .filter(Boolean);
+    }
+
+    getScopeKeywordKind(line: string) {
+        const language = normalizeGherkinLanguage(
+            this.settings.gherkinLanguage
+        );
+        const dialect = getGherkinDialect(language);
+        const match = line.match(/^\s*(\S+):(.*)$/);
+        if (!match) {
+            return null;
+        }
+        const keyword = match[1];
+        const kinds = [
+            ['feature', dialect.feature],
+            ['rule', dialect.rule],
+            ['background', dialect.background],
+            ['scenario', [...dialect.scenario, ...dialect.scenarioOutline]],
+            ['examples', dialect.examples],
+        ] as const;
+        for (const [kind, keywords] of kinds) {
+            if (keywords.includes(keyword)) {
+                return kind;
+            }
+        }
+        return null;
+    }
+
+    getEffectiveTags(lineNum: number, text: string) {
+        const lines = text.split(/\r?\n/g);
+        let featureTags: string[] = [];
+        let ruleTags: string[] = [];
+        let scenarioTags: string[] = [];
+        let pendingTags: string[] = [];
+
+        for (let i = 0; i < lineNum && i < lines.length; i++) {
+            const line = lines[i];
+            const tags = this.parseTagLine(line);
+            if (tags) {
+                pendingTags = pendingTags.concat(tags);
+                continue;
+            }
+
+            const kind = this.getScopeKeywordKind(line);
+            if (kind === 'feature') {
+                featureTags = pendingTags;
+                ruleTags = [];
+                scenarioTags = [];
+                pendingTags = [];
+                continue;
+            }
+            if (kind === 'rule') {
+                ruleTags = pendingTags;
+                scenarioTags = [];
+                pendingTags = [];
+                continue;
+            }
+            if (kind === 'background') {
+                scenarioTags = [];
+                pendingTags = [];
+                continue;
+            }
+            if (kind === 'scenario') {
+                scenarioTags = pendingTags;
+                pendingTags = [];
+                continue;
+            }
+            if (kind === 'examples') {
+                pendingTags = [];
+            }
+        }
+
+        return [...featureTags, ...ruleTags, ...scenarioTags];
+    }
+
+    shouldSkipStepValidation(lineNum: number, text: string) {
+        const skipTags = (this.settings.skipStepValidationTags || [])
+            .map((tag) => this.normalizeTag(tag))
+            .filter(Boolean);
+        if (!skipTags.length) {
+            return false;
+        }
+        const effectiveTags = this.getEffectiveTags(lineNum, text);
+        return effectiveTags.some((tag) => skipTags.includes(tag));
+    }
+
     validate(line: string, lineNum: number, text: string) {
         line = line.replace(/\s*$/, '');
         const lineForError = line.replace(/^\s*/, '');
@@ -892,17 +994,19 @@ export default class StepsHandler {
         const step = this.getStepByText(match[4], gherkinWord);
         if (step) {
             return null;
-        } else {
-            return {
-                severity: DiagnosticSeverity.Warning,
-                range: {
-                    start: { line: lineNum, character: beforeGherkin.length },
-                    end: { line: lineNum, character: line.length },
-                },
-                message: `Was unable to find step for "${lineForError}"`,
-                source: 'cucumberautocomplete',
-            } as Diagnostic;
         }
+        if (this.shouldSkipStepValidation(lineNum, text)) {
+            return null;
+        }
+        return {
+            severity: DiagnosticSeverity.Warning,
+            range: {
+                start: { line: lineNum, character: beforeGherkin.length },
+                end: { line: lineNum, character: line.length },
+            },
+            message: `Was unable to find step for "${lineForError}"`,
+            source: 'cucumberautocomplete',
+        } as Diagnostic;
     }
 
     getDefinition(line: string, text: string) {

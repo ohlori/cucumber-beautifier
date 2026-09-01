@@ -505,6 +505,108 @@ describe('validate', () => {
     expect(strictGherkinHandler.validate('But I do something', 12, testFeature))
       .toBeNull();
   });
+  it('should skip missing-step diagnostics for scenario tags in skipStepValidationTags', () => {
+    const aiHandler = new StepsHandler(__dirname, {
+      ...settings,
+      skipStepValidationTags: ['@ai'],
+    });
+    const feature = [
+      'Feature: Campaign URL Generator',
+      '',
+      '  @ai @TC-16758',
+      '  Scenario: Campaign URL Generator - Access the link builder',
+      '    Given the Campaign URL Generator page is displayed',
+      '    When the user opens the "Generate Link" workspace',
+    ].join('\n');
+
+    expect(
+      aiHandler.validate(
+        '    Given the Campaign URL Generator page is displayed',
+        4,
+        feature
+      )
+    ).toBeNull();
+    expect(
+      aiHandler.validate(
+        '    When the user opens the "Generate Link" workspace',
+        5,
+        feature
+      )
+    ).toBeNull();
+  });
+  it('should inherit Feature-level skipStepValidationTags to untagged scenarios', () => {
+    const aiHandler = new StepsHandler(__dirname, {
+      ...settings,
+      skipStepValidationTags: ['ai'],
+    });
+    const feature = [
+      '@ai',
+      'Feature: Campaign URL Generator',
+      '',
+      '  Scenario: Access the link builder',
+      '    Given the Campaign URL Generator page is displayed',
+    ].join('\n');
+
+    expect(
+      aiHandler.validate(
+        '    Given the Campaign URL Generator page is displayed',
+        4,
+        feature
+      )
+    ).toBeNull();
+  });
+  it('should still diagnose missing steps when skip tags do not apply', () => {
+    const aiHandler = new StepsHandler(__dirname, {
+      ...settings,
+      skipStepValidationTags: ['@ai'],
+    });
+    const feature = [
+      'Feature: Campaign URL Generator',
+      '',
+      '  @automated',
+      '  Scenario: Access the link builder',
+      '    Given the Campaign URL Generator page is displayed',
+    ].join('\n');
+
+    expect(
+      aiHandler.validate(
+        '    Given the Campaign URL Generator page is displayed',
+        4,
+        feature
+      )
+    ).not.toBeNull();
+  });
+  it('should not skip Background steps using a later Scenario skip tag', () => {
+    const aiHandler = new StepsHandler(__dirname, {
+      ...settings,
+      skipStepValidationTags: ['@ai'],
+    });
+    const feature = [
+      'Feature: Campaign URL Generator',
+      '',
+      '  Background:',
+      '    Given an authenticated user is signed in',
+      '',
+      '  @ai',
+      '  Scenario: Access the link builder',
+      '    Given the Campaign URL Generator page is displayed',
+    ].join('\n');
+
+    expect(
+      aiHandler.validate(
+        '    Given an authenticated user is signed in',
+        3,
+        feature
+      )
+    ).not.toBeNull();
+    expect(
+      aiHandler.validate(
+        '    Given the Campaign URL Generator page is displayed',
+        7,
+        feature
+      )
+    ).toBeNull();
+  });
 });
 
 describe('getDefinition', () => {
