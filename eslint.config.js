@@ -21,6 +21,7 @@ module.exports = [
         },
         rules: {
             ...tsPlugin.configs.recommended.rules,
+            'no-undef': 'off',
             indent: ['error', 4],
             quotes: ['error', 'single', { avoidEscape: true }],
             '@typescript-eslint/no-unused-vars': 'off',

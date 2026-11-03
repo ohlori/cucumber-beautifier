@@ -1,3 +1,8 @@
+## 3.1.3 (internal patch)
+* Steps containing `{string}`, `{word}`, `{int}`, `{float}` or `{stringInDoubleQuotes}` now use an anchored Cucumber-expression regex, so `the user clicks the {string}` no longer matches inside longer step texts (wrong Go To Definition).
+* Step lookup no longer lets `{string}` swallow later quoted params (`[^\1]` inside a class matched quotes), which made `the user clicks the {string}` match `the user clicks the "X" link and … "Y"`.
+* Trailing whitespace on a feature step no longer defeats anchored step matching.
+
 ## 3.1.2
 * Added `cucumberautocomplete.skipStepValidationTags` — skip missing-step diagnostics for steps under Feature/Rule/Scenario/Scenario Outline scopes that carry any of the listed tags (e.g. `["@ai"]`). Tags inherit downward.
 * Merged upstream `master` (post 3.1.1): file URI fix for Go to Definition, completion ordering by usage count, ignore empty `steps` entries, ctrl+click behavior fix, GitHub Actions CI and extension-host tests.

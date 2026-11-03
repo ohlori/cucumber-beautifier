@@ -299,6 +299,11 @@ export default class StepsHandler {
         if (hasStrongRegExpSyntax) {
             return false;
         }
+        // Parameter types are Cucumber-expression syntax; the anchored regex stops
+        // `clicks the {string} {word}` from matching inside longer step texts.
+        if (/{(?:string|word|int|float|stringInDoubleQuotes)}/.test(step)) {
+            return true;
+        }
         return /\\\\[{}()/\\]/.test(step) || /[()+?/]/.test(step);
     }
 
@@ -695,7 +700,9 @@ export default class StepsHandler {
                     : isCucumberExpression
                         ? this.getRegTextForCucumberExpression(step)
                         : this.getRegTextForStep(step);
-                reg = new RegExp(regText);
+                // `[^\1]` is not a backreference inside a class (it matches quotes), so a `{string}`
+                // swallows later quoted params; match each quote style explicitly for step lookup.
+                reg = new RegExp(regText.split('("|\')[^\\1]*\\1').join('(?:"[^"]*"|\'[^\']*\')'));
             } catch (err) {
                 // Filter invalid long regular expressions.
                 return steps;
@@ -871,7 +878,8 @@ export default class StepsHandler {
         const matches = this.elements.filter(
             (s) => {
                 const isGherkinOk = gherkin !== undefined ? s.gherkin === gherkin : true;
-                const isStepOk = s.reg.test(text);
+                // Trailing whitespace must not defeat anchored (Cucumber expression) regexes.
+                const isStepOk = s.reg.test(text.trimEnd());
                 return isGherkinOk && isStepOk;
             }
         );
