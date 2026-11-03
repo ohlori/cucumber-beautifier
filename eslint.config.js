@@ -8,7 +8,7 @@ module.exports = [
     },
     js.configs.recommended,
     {
-        files: ['gclient/src/**/*.ts', 'gserver/src/**/*.ts'],
+        files: ['gclient/src/**/*.ts', 'gclient/test/suite/**/*.ts', 'gserver/src/**/*.ts'],
         languageOptions: {
             parser: tsParser,
             parserOptions: {

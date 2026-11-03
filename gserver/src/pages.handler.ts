@@ -9,7 +9,6 @@ import {
     Diagnostic,
     DiagnosticSeverity,
     CompletionItemKind,
-    TextEdit,
 } from 'vscode-languageserver';
 
 import { globSync } from 'glob';
@@ -20,7 +19,7 @@ export type Page = {
   id: string;
   text: string;
   desc: string;
-  def: Definition;
+  def: Location;
   objects: PageObject[];
 };
 
@@ -28,7 +27,7 @@ export type PageObject = {
   id: string;
   text: string;
   desc: string;
-  def: Definition;
+  def: Location;
 };
 
 type FeaturePosition =

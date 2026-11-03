@@ -82,6 +82,10 @@
             "array",
             "string"
           ],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "required": false,
           "default": []
         },
@@ -283,13 +287,19 @@
     "bundle:client": "esbuild gclient/src/extension.ts --bundle --platform=node --format=cjs --target=node18 --external:vscode --outfile=gclient/out/extension.js",
     "bundle:client-assets": "node scripts/copy-languageclient-assets.js",
     "bundle:server": "esbuild gserver/src/server.ts --bundle --platform=node --format=cjs --target=node18 --outfile=gserver/out/server.js",
-    "lint": "eslint ./gclient/src ./gserver/src",
-    "lint:fix": "eslint ./gclient/src ./gserver/src --fix",
+    "lint": "eslint ./gclient/src ./gclient/test/suite ./gserver/src",
+    "lint:fix": "eslint ./gclient/src ./gclient/test/suite ./gserver/src --fix",
     "postinstall": "npm --prefix gclient ci && npm --prefix gserver ci",
     "vscode:prepublish": "npm run compile && npm run bundle",
     "publish": "vsce publish",
     "login": "vsce login",
     "test:server": "jest",
+    "test:coverage:jest": "jest --coverage",
+    "compile:e2e": "npm run compile && tsc -p ./gclient/test/tsconfig.json",
+    "test:e2e": "npm run compile:e2e && vscode-test",
+    "test:e2e:coverage": "node -e \"require('node:fs').rmSync('coverage/e2e',{recursive:true,force:true})\" && npm run compile:e2e && vscode-test --coverage --coverage-output coverage/e2e",
+    "coverage:check": "node ./scripts/check-combined-coverage.mjs",
+    "test:coverage": "npm run test:coverage:jest && npm run test:e2e:coverage && npm run coverage:check",
     "test": "npm run test:server"
   },
   "devDependencies": {
@@ -298,11 +308,21 @@
     "@types/node": "^18.19.130",
     "@typescript-eslint/eslint-plugin": "^8.68.0",
     "@typescript-eslint/parser": "^8.68.0",
+    "@vscode/test-cli": "0.0.15",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "eslint": "^10.9.1",
+    "istanbul-lib-coverage": "^3.2.2",
+    "istanbul-lib-report": "^3.0.1",
+    "istanbul-reports": "^3.1.7",
     "jest": "^30.5.0",
     "ts-jest": "^29.4.12",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "@azure/identity": "4.13.1",
+    "qs": "6.16.0",
+    "tmp": "0.2.7"
   }
 }

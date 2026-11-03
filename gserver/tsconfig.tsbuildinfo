@@ -1,0 +1,1 @@
+{"root":["./src/format.ts","./src/gherkin.ts","./src/pages.handler.ts","./src/semantic.tokens.ts","./src/server.ts","./src/settings.ts","./src/steps.handler.ts","./src/types.ts","./src/util.ts"],"version":"5.9.3"}

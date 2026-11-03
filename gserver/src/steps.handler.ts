@@ -868,13 +868,16 @@ export default class StepsHandler {
     }
 
     getStepByText(text: string, gherkin?: GherkinType) {
-        return this.elements.find(
+        const matches = this.elements.filter(
             (s) => {
                 const isGherkinOk = gherkin !== undefined ? s.gherkin === gherkin : true;
                 const isStepOk = s.reg.test(text);
                 return isGherkinOk && isStepOk;
             }
         );
+        return matches.find(
+            (s) => new RegExp(`^(?:${s.reg.source})$`, s.reg.flags).test(text)
+        ) ?? matches[0];
     }
 
     normalizeTag(tag: string) {
@@ -1091,7 +1094,10 @@ export default class StepsHandler {
                     kind: CompletionItemKind.Snippet,
                     data: step.id,
                     documentation: step.documentation,
-                    sortText: getSortPrefix(step.count, 5) + '_' + step.text,
+                    sortText:
+                        getSortPrefix(this.getElementCount(step.id), 5) +
+                        '_' +
+                        step.text,
                     insertText: this.getCompletionInsertText(
                         this.getBestCompletionVariant(
                             step.completionVariants,
